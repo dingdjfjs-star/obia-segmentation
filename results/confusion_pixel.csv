@@ -1,0 +1,6 @@
+﻿,预测_water,预测_forest,预测_farmland,预测_soil,预测_builtup
+真值_water,21000,0,0,0,0
+真值_forest,0,48863,15,0,1
+真值_farmland,0,1,7608,0,0
+真值_soil,0,0,0,46913,1174
+真值_builtup,17,0,29,9880,126643

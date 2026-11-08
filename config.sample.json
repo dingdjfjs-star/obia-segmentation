@@ -1,0 +1,5 @@
+{
+  "_说明": "可选：把 --config 指向真实 4 波段 GeoTIFF（任意波段数亦可）即可替换内置合成场景；--truth 提供同尺寸像素级真值栅格（编码 1..C）用于精度评估。影像会自动重采样到 10m/UTM50N 语义仅用于矢量配准。",
+  "image": "path/to/your/image.tif",
+  "truth": "path/to/your/truth.tif"
+}

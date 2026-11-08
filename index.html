@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>手写面向对象遥感分割分类（eCognition 思路复现）</title>
+<style>
+:root { --ink:#2b2a26; --paper:#faf8f2; --accent:#8a3324; --line:#d8d2c4; --soft:#6b675e; }
+* { box-sizing:border-box; }
+body { margin:0; color:var(--ink); background:var(--paper);
+  font:15px/1.75 "Microsoft YaHei","PingFang SC",system-ui,sans-serif; }
+.wrap { max-width:1080px; margin:0 auto; padding:32px 20px 64px; }
+header { border-bottom:3px double var(--ink); padding-bottom:18px; margin-bottom:26px; }
+h1 { font-size:26px; margin:0 0 6px; }
+h2 { font-size:19px; margin:38px 0 12px; border-left:5px solid var(--accent); padding-left:10px; }
+.sub { color:var(--soft); }
+.badges span { display:inline-block; border:1px solid var(--line); border-radius:3px;
+  background:#fff; padding:1px 9px; margin:3px 6px 0 0; font-size:12.5px; color:var(--soft); }
+.cards { display:grid; grid-template-columns:repeat(auto-fit,minmax(210px,1fr)); gap:12px; margin:18px 0; }
+.card { background:#fff; border:1px solid var(--line); border-radius:6px; padding:14px 16px; }
+.card b { display:block; font-size:22px; color:var(--accent); }
+.card span { font-size:13px; color:var(--soft); }
+table { border-collapse:collapse; width:100%; background:#fff; font-size:14px; margin:10px 0; }
+th,td { border:1px solid var(--line); padding:6px 10px; text-align:center; }
+thead th { background:#f1ede3; }
+tr.main td { color:var(--accent); font-size:12px; border-style:dashed; }
+tr.hl td { background:#fbf3e4; font-weight:600; }
+figure { margin:16px 0; background:#fff; border:1px solid var(--line); padding:12px; }
+figure img { width:100%; height:auto; display:block; }
+figcaption { font-size:13.5px; color:var(--soft); margin-top:8px; }
+.formula { background:#fff; border:1px solid var(--line); border-left:4px solid var(--accent);
+  padding:10px 16px; margin:10px 0; font-family:Consolas,monospace; font-size:14.5px; overflow-x:auto; }
+.steps { display:flex; flex-wrap:wrap; gap:8px; margin:12px 0; }
+.step { flex:1 1 150px; background:#fff; border:1px solid var(--line); border-radius:6px;
+  padding:10px 12px; font-size:13.5px; }
+.step b { color:var(--accent); }
+ul { margin:8px 0; padding-left:22px; }
+a { color:#1a5276; text-decoration:none; }
+a:hover { text-decoration:underline; }
+.dl { display:grid; grid-template-columns:repeat(auto-fit,minmax(250px,1fr)); gap:8px; }
+.dl a { display:block; background:#fff; border:1px solid var(--line); border-radius:4px;
+  padding:7px 12px; font-size:13.5px; }
+footer { margin-top:44px; border-top:1px solid var(--line); padding-top:12px;
+  color:var(--soft); font-size:12.5px; }
+.muted { color:var(--soft); font-size:13.5px; }
+code { background:#f1ede3; border-radius:3px; padding:0 5px; font-size:13px; }
+</style>
+</head>
+<body><div class="wrap">
+
+<header>
+  <h1>手写面向对象遥感分割分类流水线</h1>
+  <div class="sub">复刻 eCognition 多分辨率分割思路 · Python + rasterio + scikit-image · 核心分割逻辑零 SDK 手写</div>
+  <div class="badges">
+    <span>seed 20260829</span><span>影像 512×512×4 波段</span>
+    <span>scale 10 / shape 0.2 / compactness 0.5</span>
+    <span>440 图斑 · 261,704 次合并 · 61s</span>
+  </div>
+</header>
+
+<h2>一句话结论</h2>
+<div class="cards">
+  <div class="card"><b>0.959 vs 0.958</b><span>总体精度 OA：面向对象 0.959 ≈ 像素级 0.958（持平略胜）</span></div>
+  <div class="card"><b>↓ 11 倍</b><span>椒盐率 0.0018 vs 0.0193 —— 碎斑大幅消失，矢量制图免后处理</span></div>
+  <div class="card"><b>+49%</b><span>边界贴合 F1 0.481 vs 0.323 —— 对象边界自动贴住地物边线</span></div>
+</div>
+
+<h2>对比总表（全图口径）</h2>
+<table>
+<thead><tr><th>指标</th><th>像素级 RF</th><th>面向对象 RF（本流程）</th><th>skimage SLIC 对照</th></tr></thead>
+<tbody>
+<tr class="hl"><td>分类单元</td><td>262,144 像素</td><td>440 图斑</td><td>441 超像素</td></tr>
+<tr class="hl"><td>总体精度 OA</td><td>0.958</td><td>0.959</td><td>0.945</td></tr>
+<tr><td>椒盐率</td><td>0.0193</td><td>0.0018</td><td>0.0002</td></tr>
+<tr><td>边界贴合 F1（vs 地类真值）</td><td>0.323</td><td>0.481</td><td>0.285</td></tr>
+<tr><td>分割耗时</td><td>—（免分割）</td><td>61s（手写 MRS）</td><td>0.8s（k-means）</td></tr>
+</tbody>
+</table>
+
+<h2>成果图</h2>
+<figure><a href="results/figs/fig1_multiscale_compare.png"><img src="results/figs/fig1_multiscale_compare.png" alt="多尺度分割对比"></a>
+<figcaption><b>图 1 · 多尺度分割对比</b> —— scale 从 10 到 80（440→43 图斑）：同一合并树按尺度阈值截断，层级严格嵌套，即 eCognition"多尺度层级"的来源。</figcaption></figure>
+<figure><a href="results/figs/fig2_pixel_vs_object.png"><img src="results/figs/fig2_pixel_vs_object.png" alt="像素级 vs 面向对象"></a>
+<figcaption><b>图 2 · 像素级 vs 面向对象</b> —— 上：RGB/真值/像素级分类；下：对象级分类与两套误差图。像素级错分散布全图（椒盐），对象级错分收缩到边界带。</figcaption></figure>
+<figure><a href="results/figs/fig3_sensitivity.png"><img src="results/figs/fig3_sensitivity.png" alt="参数敏感性"></a>
+<figcaption><b>图 3 · 参数敏感性曲线</b> —— scale/shape 扫描下的对象数、平均面积、边界贴合与分类精度。</figcaption></figure>
+
+<h2>方法摘要：异质性准则（Baatz &amp; Schäpe 2000）</h2>
+<div class="steps">
+  <div class="step"><b>① 单像素起步</b><br>4 邻域邻接图，全部相邻对象对的合并代价入优先队列</div>
+  <div class="step"><b>② 贪心合并</b><br>弹出全局最小代价对，统计量/周长/邻接表增量融合</div>
+  <div class="step"><b>③ 阈值截断</b><br>堆顶代价 &gt; scale 即停 —— 不同 scale 的结果天然嵌套</div>
+  <div class="step"><b>④ 特征 + 分类</b><br>19 维图斑特征 → RandomForest → 回填栅格 + 矢量化</div>
+</div>
+<div class="formula">f(a,b) = w<sub>color</sub>·Δh<sub>color</sub> + w<sub>shape</sub>·Δh<sub>shape</sub>，　w<sub>color</sub> = 1 − w<sub>shape</sub></div>
+<div class="formula">Δh<sub>color</sub> = Σ<sub>b</sub> w<sub>b</sub> [ n<sub>m</sub>σ<sub>m,b</sub> − n<sub>a</sub>σ<sub>a,b</sub> − n<sub>b</sub>σ<sub>b,b</sub> ]　<span class="muted">（同类≈0，跨类陡增 → 边界停位）</span></div>
+<div class="formula">Δh<sub>smooth</sub> = n<sub>m</sub>(b<sub>m</sub>/l<sub>m</sub>) − n<sub>a</sub>(b<sub>a</sub>/l<sub>a</sub>) − n<sub>b</sub>(b<sub>b</sub>/l<sub>b</sub>)　　Δh<sub>cpt</sub> = n<sub>m</sub>(b<sub>m</sub>/√n<sub>m</sub>) − n<sub>a</sub>(b<sub>a</sub>/√n<sub>a</sub>) − n<sub>b</sub>(b<sub>b</sub>/√n<sub>b</sub>)</div>
+<p>实测发现：<b>吞并狭长边界条带时形状项为大负值</b>（条带自身 b/√n 惩罚极重），可抵消光谱代价引发链式吸收直至全图并一 —— scale 的安全上限与 shape/compactness 取值耦合，换参须重新标定。</p>
+
+<h2>参数敏感性（512² 场景，逐参数扫描其余固定）</h2>
+<h3 style="font-size:16px;margin:16px 0 6px;">scale（尺度阈值）</h3>
+<table><thead><tr><th>参数</th><th>图斑数</th><th>平均面积(px)</th><th>分割边界F1</th><th>图斑级OA*</th></tr></thead><tbody><tr><td>5</td><td>925</td><td>283</td><td>0.249</td><td>0.988</td></tr><tr><td>20</td><td>191</td><td>1372</td><td>0.239</td><td>0.984</td></tr><tr><td>40</td><td>93</td><td>2819</td><td>0.219</td><td>0.978</td></tr><tr><td>80</td><td>43</td><td>6096</td><td>0.204</td><td>0.953</td></tr><tr><td>160</td><td>21</td><td>12483</td><td>0.171</td><td>0.905</td></tr></tbody></table>
+<p class="muted">对象数随 scale 单调下降；图斑级分类 OA 随 scale 单调下降（对象越大越易跨界整斑错分）——"过分割对分类几乎无害，欠分割致命"。* 图斑级 OA 为测试图斑口径；全图口径见上表。</p>
+<h3 style="font-size:16px;margin:16px 0 6px;">shape（形状权重）</h3>
+<table><thead><tr><th>参数</th><th>图斑数</th><th>平均面积(px)</th><th>分割边界F1</th><th>图斑级OA*</th></tr></thead><tbody><tr><td>0</td><td>131</td><td>2001</td><td>0.405</td><td>0.992</td></tr><tr><td>0.1</td><td>271</td><td>967</td><td>0.288</td><td>0.985</td></tr><tr><td>0.3</td><td>663</td><td>395</td><td>0.237</td><td>0.988</td></tr><tr><td>0.5</td><td>1001</td><td>262</td><td>0.229</td><td>0.991</td></tr></tbody></table>
+<p class="muted">shape=0（纯光谱）在本合成场景反而最优（131 对象、边界 F 最高）：负形状偏移使混合像元壕沟条带被两侧吸收、对象边界贴住田块边线；真实数据中道路/建筑等形状语义强的目标仍需形状项。</p>
+<h3 style="font-size:16px;margin:16px 0 6px;">compactness（紧致度）</h3>
+<table><thead><tr><th>参数</th><th>图斑数</th><th>平均面积(px)</th><th>分割边界F1</th><th>图斑级OA*</th></tr></thead><tbody><tr><td>0</td><td>101</td><td>2595</td><td>0.367</td><td>0.960</td></tr><tr><td>0.3</td><td>344</td><td>762</td><td>0.250</td><td>0.983</td></tr><tr><td>0.8</td><td>685</td><td>383</td><td>0.238</td><td>0.981</td></tr></tbody></table>
+
+<h2>复现方式</h2>
+<div class="formula">E:\Ana\python.exe scripts\run_demo.py　　　<span class="muted"># 一键端到端（含 12 点扫描，约 14 分钟）</span></div>
+<div class="formula">E:\Ana\python.exe test\test_pipeline.py　　<span class="muted"># 31 项断言自动化质检</span></div>
+<p class="muted">内置合成场景（5 类地物 × 12 分区 × 70 田块，分类别纹理 + 像素噪声 σ=0.028 + 田块光谱抖动 + 边界混合像元），自带像素级与图斑级真值，不联网。</p>
+
+<h2>下载</h2>
+<div class="dl">
+  <a href="README.md">📄 README.md（完整文档）</a>
+  <a href="results/segments.geojson">🗺 segments.geojson（440 图斑矢量，508 KB）</a>
+  <a href="results/summary.json">📊 summary.json（全部指标）</a>
+  <a href="results/sensitivity.csv">📈 sensitivity.csv（扫描原始数据）</a>
+  <a href="results/object_features.csv">🧾 object_features.csv（19 维特征表）</a>
+  <a href="results/confusion_object.csv">🔢 混淆矩阵（对象级 / <a href="results/confusion_pixel.csv">像素级</a>）</a>
+</div>
+<h2>源码</h2>
+<div class="dl">
+  <a href="obia/segment.py">★ obia/segment.py（手写多尺度区域生长）</a>
+  <a href="obia/features.py">obia/features.py（图斑特征 + 手写掩膜 GLCM）</a>
+  <a href="obia/classify.py">obia/classify.py（RF 分类）</a>
+  <a href="obia/baselines.py">obia/baselines.py（SLIC 对照）</a>
+  <a href="obia/vectorize.py">obia/vectorize.py（GeoJSON / GeoTIFF）</a>
+  <a href="obia/metrics.py">obia/metrics.py（精度/椒盐/边界 F）</a>
+  <a href="obia/synthetic.py">obia/synthetic.py（合成场景）</a>
+  <a href="obia/viz.py">obia/viz.py（出图）</a>
+  <a href="scripts/run_demo.py">scripts/run_demo.py（一键端到端）</a>
+  <a href="test/test_pipeline.py">test/test_pipeline.py（31 项质检）</a>
+</div>
+
+<footer>
+  手写复现练习项目 · 核心分割逻辑零 SDK · skimage SLIC 按约束仅作对照 ·
+  生成于 20260829 场景 · 指标单一来源 results/summary.json ·
+  本页由 tools/prepare_deploy.py 自动生成
+</footer>
+</div></body></html>
